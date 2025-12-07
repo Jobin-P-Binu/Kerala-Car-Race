@@ -210,19 +210,45 @@ function generateWorld() {
     for (let i = 0; i < 40; i++) {
         let startX = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
         let startY = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
-        // Avoid roads
-        if (Math.abs(startX) < 300) continue;
+
+        // Strict overlap check with ALL roads
+        let overlap = false;
+        const padding = 200; // Safe distance
+        for (let r of ROADS) {
+            if (startX > r.x - padding && startX < r.x + r.w + padding &&
+                startY > r.y - padding && startY < r.y + r.h + padding) {
+                overlap = true;
+                break;
+            }
+        }
+        if (overlap) continue;
 
         let width = 150 + Math.random() * 300;
         let points = [];
         let len = 50 + Math.random() * 80;
+
+        // Generate points and check them too (simple verify)
+        let valid = true;
         for (let j = 0; j < len; j++) {
-            points.push({
-                x: startX + Math.sin(j * 0.1) * 800 + (Math.random() - 0.5) * 300,
-                y: startY + j * 300
-            });
+            let px = startX + Math.sin(j * 0.1) * 800 + (Math.random() - 0.5) * 300;
+            let py = startY + j * 300;
+
+            // Re-check point against roads
+            for (let r of ROADS) {
+                if (px > r.x - padding && px < r.x + r.w + padding &&
+                    py > r.y - padding && py < r.y + r.h + padding) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) break;
+
+            points.push({ x: px, y: py });
         }
-        state.world.waters.push({ points, width });
+
+        if (valid) {
+            state.world.waters.push({ points, width });
+        }
     }
 
     // 2. Coconut Trees & Buildings
@@ -584,7 +610,13 @@ class Car {
     draw(ctx) {
         ctx.save();
         ctx.translate(this.x, this.y);
-        ctx.rotate(this.angle + Math.PI / 2);
+
+        // Fix: Rotate Ferrari and Lamborghini 180 degrees
+        let drawAngle = this.angle + Math.PI / 2;
+        if (this.type === 'ferrari' || this.type === 'lamborghini') {
+            drawAngle += Math.PI;
+        }
+        ctx.rotate(drawAngle);
 
         // Shadow
         ctx.shadowColor = 'rgba(0,0,0,0.5)';
@@ -622,6 +654,9 @@ function init() {
 function loadAssets() {
     let promises = [];
     for (let key in assets.sources) {
+        // Fix: Skip non-image assets to prevent loading hang
+        if (key === 'bg_music') continue;
+
         let p = new Promise((resolve) => {
             const img = new Image();
             img.src = assets.sources[key];
