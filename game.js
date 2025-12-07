@@ -13,14 +13,18 @@ const CONFIG = {
 const state = {
     screen: 'loading',
     selectedCar: 'ferrari',
+    difficulty: 'medium', // easy, medium, hard
     cars: [],
     camera: { x: 0, y: 0 },
+    particles: [], // For drift smoke
+    leaderboard: [],
     world: {
         trees: [],
         waters: [],
         seed: 123
     },
-    musicOn: false
+    dayTime: 0, // 0 to 24 hours
+    sunIntensity: 1
 };
 
 // Assets
@@ -29,7 +33,8 @@ const assets = {
     sources: {
         car_ferrari: 'assets/car_ferrari.png',
         car_lamborghini: 'assets/car_lamborghini.png',
-        car_porsche: 'assets/car_porsche.png'
+        car_porsche: 'assets/car_porsche.png',
+        bg_music: 'background.mp3'
     }
 };
 
@@ -41,12 +46,12 @@ const ctx = canvas.getContext('2d', { alpha: false });
 const keys = {
     w: false, a: false, s: false, d: false,
     ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false,
-    m: false
+    Shift: false
 };
 
 window.addEventListener('keydown', e => {
     keys[e.key] = true;
-    if (e.key === 'm' || e.key === 'M') toggleMusic();
+    if (e.key === 'h' || e.key === 'H') audio.playHorn();
 });
 window.addEventListener('keyup', e => keys[e.key] = false);
 window.addEventListener('resize', resize);
@@ -59,6 +64,10 @@ resize();
 
 // ============================================
 // AUDIO SYSTEM (Engine + Music)
+// Background Music
+const bgMusic = new Audio('background.mp3');
+bgMusic.loop = true;
+
 // ============================================
 class AudioController {
     constructor() {
@@ -69,15 +78,8 @@ class AudioController {
         this.engineOsc = null;
         this.engineGain = null;
 
-        // Music
-        this.musicGain = null;
-        this.nextNoteTime = 0;
-        this.beatCount = 0;
-        this.tempo = 140; // Asphalt style high energy
-        this.lookahead = 25.0;
-        this.scheduleAheadTime = 0.1;
-        this.isPlaying = false;
-        this.timerID = null;
+        // Ambience
+        this.windGain = null;
     }
 
     init() {
@@ -90,10 +92,7 @@ class AudioController {
             this.compressor.connect(this.ctx.destination);
 
             this.setupEngine();
-
-            this.musicGain = this.ctx.createGain();
-            this.musicGain.gain.value = 0.4;
-            this.musicGain.connect(this.compressor);
+            this.setupAmbience();
 
             this.initialized = true;
         } catch (e) { console.warn('Audio init failed', e); }
@@ -118,6 +117,53 @@ class AudioController {
         this.engineOsc.start();
     }
 
+    setupAmbience() {
+        const bufferSize = this.ctx.sampleRate * 2; // 2 sec noise
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+        noise.loop = true;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 400;
+
+        this.windGain = this.ctx.createGain();
+        this.windGain.gain.value = 0;
+
+        noise.connect(filter);
+        filter.connect(this.windGain);
+        this.windGain.connect(this.ctx.destination);
+        noise.start();
+    }
+
+    playHorn() {
+        if (!this.initialized) return;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 400;
+
+        const osc2 = this.ctx.createOscillator();
+        osc2.type = 'sawtooth';
+        osc2.frequency.value = 500;
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+
+        osc.connect(gain);
+        osc2.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start();
+        osc2.start();
+        osc.stop(this.ctx.currentTime + 0.5);
+        osc2.stop(this.ctx.currentTime + 0.5);
+    }
+
     updateEngine(speed, isTurning) {
         if (!this.initialized) return;
         if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -128,124 +174,17 @@ class AudioController {
 
         const vol = 0.05 + (absSpeed / CONFIG.MAX_SPEED) * 0.1;
         this.engineGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.1);
-    }
 
-    // --- Procedural Music sequencer ---
-    toggleMusic() {
-        if (!this.initialized) this.init();
-        this.isPlaying = !this.isPlaying;
-
-        if (this.isPlaying) {
-            this.nextNoteTime = this.ctx.currentTime;
-            this.scheduler();
-        } else {
-            window.clearTimeout(this.timerID);
+        // Update Wind
+        if (this.windGain) {
+            const windVol = (absSpeed / CONFIG.MAX_SPEED) * 0.3;
+            this.windGain.gain.setTargetAtTime(windVol, this.ctx.currentTime, 0.5);
         }
-    }
-
-    scheduler() {
-        while (this.nextNoteTime < this.ctx.currentTime + this.scheduleAheadTime) {
-            this.scheduleNote(this.beatCount, this.nextNoteTime);
-            this.nextNote();
-        }
-        this.timerID = window.setTimeout(() => this.scheduler(), this.lookahead);
-    }
-
-    nextNote() {
-        const secondsPerBeat = 60.0 / this.tempo;
-        this.nextNoteTime += 0.25 * secondsPerBeat; // 16th notes
-        this.beatCount++;
-        if (this.beatCount === 16) this.beatCount = 0;
-    }
-
-    scheduleNote(beatNumber, time) {
-        // Simple "Trance" Pattern
-
-        // Kick: 4/4 (Beats 0, 4, 8, 12)
-        if (beatNumber % 4 === 0) {
-            this.playKick(time);
-        }
-
-        // Hi-Hat: Off-beats (Beats 2, 6, 10, 14) or every 16th
-        if (beatNumber % 2 !== 0) {
-            this.playHiHat(time);
-        }
-
-        // Bass: Rolling 16ths, excluding Kick downbeats usually, or sidechained
-        if (beatNumber % 4 !== 0) {
-            this.playBass(time, beatNumber);
-        }
-    }
-
-    playKick(time) {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.frequency.setValueAtTime(150, time);
-        osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.5);
-        gain.gain.setValueAtTime(1, time);
-        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
-
-        osc.connect(gain);
-        gain.connect(this.musicGain);
-        osc.start(time);
-        osc.stop(time + 0.5);
-    }
-
-    playHiHat(time) {
-        // Noise buffer for HiHat
-        const bufferSize = this.ctx.sampleRate * 0.1; // 0.1s
-        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-
-        const noise = this.ctx.createBufferSource();
-        noise.buffer = buffer;
-
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = 5000;
-
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.3, time);
-        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
-
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.musicGain);
-        noise.start(time);
-    }
-
-    playBass(time, beat) {
-        const osc = this.ctx.createOscillator();
-        osc.type = 'sawtooth';
-        // F - G - G# progression
-        let freq = 43.65; // F1
-        if (beat > 8) freq = 49.00; // G1
-
-        osc.frequency.setValueAtTime(freq, time);
-
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(400, time);
-        filter.frequency.exponentialRampToValueAtTime(100, time + 0.1); // Pluck envelop
-
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.4, time);
-        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
-
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.musicGain);
-        osc.start(time);
-        osc.stop(time + 0.2);
     }
 }
 
 const audio = new AudioController();
-function toggleMusic() {
-    audio.toggleMusic();
-    state.musicOn = audio.isPlaying;
-}
+
 document.addEventListener('click', () => { if (!audio.initialized) audio.init(); }, { once: true });
 document.addEventListener('keydown', () => { if (!audio.initialized) audio.init(); }, { once: true });
 
@@ -253,11 +192,27 @@ document.addEventListener('keydown', () => { if (!audio.initialized) audio.init(
 // ============================================
 // WORLD GENERATION (KERALA THEME)
 // ============================================
+const ROADS = [];
+const BUILDINGS = [];
+
 function generateWorld() {
+    // 0. Road Network (Grid for now)
+    // Vertical Main Road
+    ROADS.push({ x: 0, y: -CONFIG.WORLD_SIZE / 2, w: 200, h: CONFIG.WORLD_SIZE });
+
+    // Horizontal Connectors
+    for (let i = 0; i < 10; i++) {
+        let y = (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.8;
+        ROADS.push({ x: -CONFIG.WORLD_SIZE / 2, y: y, w: CONFIG.WORLD_SIZE, h: 180 });
+    }
+
     // 1. Water Bodies (Backwaters)
     for (let i = 0; i < 40; i++) {
         let startX = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
         let startY = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
+        // Avoid roads
+        if (Math.abs(startX) < 300) continue;
+
         let width = 150 + Math.random() * 300;
         let points = [];
         let len = 50 + Math.random() * 80;
@@ -270,13 +225,33 @@ function generateWorld() {
         state.world.waters.push({ points, width });
     }
 
-    // 2. Coconut Trees
+    // 2. Coconut Trees & Buildings
     for (let i = 0; i < 5000; i++) {
-        state.world.trees.push({
-            x: Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2,
-            y: Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2,
-            scale: 1 + Math.random() * 0.8,
-            angle: Math.random() * Math.PI * 2
+        let x = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
+        let y = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
+
+        // Simple overlap check with roads
+        let onRoad = ROADS.some(r =>
+            x > r.x - r.w / 2 && x < r.x + r.w / 2 + r.w && // Box approx
+            y > r.y && y < r.y + r.h
+        ); // Very rough, refining later
+
+        if (!onRoad) {
+            state.world.trees.push({
+                x: x,
+                y: y,
+                scale: 1 + Math.random() * 0.8,
+                angle: Math.random() * Math.PI * 2
+            });
+        }
+    }
+
+    // Add Special Buildings
+    for (let i = 0; i < 20; i++) {
+        BUILDINGS.push({
+            type: Math.random() > 0.5 ? 'tea_shop' : 'bus_stop',
+            x: (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.2, // Near center
+            y: (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.2
         });
     }
 }
@@ -300,6 +275,11 @@ function drawCoconutTree(ctx, x, y, scale) {
     ctx.moveTo(0, 0);
     ctx.bezierCurveTo(20, -50, -10, -100, 10, -150);
     ctx.stroke();
+
+    ctx.restore(); // Fix context leak
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
 
     // Leaves (Palm)
     ctx.translate(10, -150);
@@ -350,22 +330,83 @@ function drawWater(ctx, water) {
     ctx.globalCompositeOperation = 'source-over';
 }
 
+function drawBuilding(ctx, b) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    if (b.type === 'tea_shop') {
+        // Simple Huts
+        ctx.fillStyle = '#795548';
+        ctx.fillRect(-40, -40, 80, 80);
+        ctx.fillStyle = '#ff5722'; // Tile roof
+        ctx.beginPath();
+        ctx.moveTo(-50, -40);
+        ctx.lineTo(0, -90);
+        ctx.lineTo(50, -40);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.font = '12px Arial';
+        ctx.fillText("TEA", -10, 0);
+    } else {
+        // KSRTC Bus Stop
+        ctx.fillStyle = '#FFF176'; // Light Yellow
+        ctx.fillRect(-60, -40, 120, 80);
+        ctx.fillStyle = '#4CAF50'; // Green stripe
+        ctx.fillRect(-60, 0, 120, 20);
+        ctx.fillStyle = 'black';
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText("KSRTC", -20, 15);
+    }
+    ctx.restore();
+}
+
+function drawRoads(ctx, viewL, viewR, viewT, viewB) {
+    ctx.fillStyle = '#37474f'; // Asphalt Gray
+    ROADS.forEach(r => {
+        // Simple culling
+        if (r.x + r.w > viewL && r.x < viewR && r.y + r.h > viewT && r.y < viewB) {
+            ctx.fillRect(r.x, r.y, r.w, r.h);
+            // White lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.setLineDash([40, 40]);
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            if (r.w < r.h) { // Vertical
+                ctx.moveTo(r.x + r.w / 2, r.y);
+                ctx.lineTo(r.x + r.w / 2, r.y + r.h);
+            } else { // Horizontal
+                ctx.moveTo(r.x, r.y + r.h / 2);
+                ctx.lineTo(r.x + r.w, r.y + r.h / 2);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    });
+}
+
 // ============================================
 // CAR CLASS
 // ============================================
 class Car {
-    constructor(type, x, y) {
+    constructor(type, x, y, isAI = false) {
         this.type = type;
         this.x = x;
         this.y = y;
+        this.isAI = isAI;
         this.angle = 0;
         this.speed = 0;
-        this.img = assets.images[`car_${type}`];
+        this.img = assets.images[`car_${type}`] || assets.images['car_ferrari']; // Fallback
         this.width = 70;
         this.height = 120;
         this.velX = 0;
         this.velY = 0;
         this.drift = 0;
+        this.nitro = 100;
+        this.plate = this.generatePlate();
+        this.name = isAI ? this.getRandomName() : "YOU";
+
+        // AI State
+        this.targetNode = null;
+        this.aiOffset = (Math.random() - 0.5) * 50; // Lane offset
     }
 
     update() {
@@ -374,10 +415,26 @@ class Car {
         let gas = 0;
         let turn = 0;
 
-        if (keys.w || keys.ArrowUp) gas = 1;
-        if (keys.s || keys.ArrowDown) gas = -1;
-        if (keys.a || keys.ArrowLeft) turn = -1;
-        if (keys.d || keys.ArrowRight) turn = 1;
+        if (!this.isAI) {
+            // Player Inputs
+            if (keys.w || keys.ArrowUp) gas = 1;
+            if (keys.s || keys.ArrowDown) gas = -1;
+            if (keys.a || keys.ArrowLeft) turn = -1;
+            if (keys.d || keys.ArrowRight) turn = 1;
+
+            // Nitro Input
+            if (keys.Shift && this.nitro > 0 && gas > 0) {
+                gas *= 2.0; // Boost acceleration
+                this.nitro -= 0.5;
+            } else if (this.nitro < 100) {
+                this.nitro += 0.1; // Regen
+            }
+        } else {
+            // AI Inputs
+            const result = this.aiControl();
+            gas = result.gas;
+            turn = result.turn;
+        }
 
         // Physics
         this.speed += gas * CONFIG.ACCELERATION;
@@ -389,6 +446,21 @@ class Car {
             if (gas === 0 && Math.abs(this.speed) > 10) turnFactor *= 1.5; // Handbrake turn feel
 
             this.angle += turn * turnFactor;
+
+            // Drift Smoke
+            if (Math.abs(turn) > 0.8 && Math.abs(this.speed) > 15) {
+                state.particles.push({
+                    x: this.x - Math.cos(this.angle) * 40 + (Math.random() - 0.5) * 10,
+                    y: this.y - Math.sin(this.angle) * 40 + (Math.random() - 0.5) * 10,
+                    life: 1,
+                    size: 5 + Math.random() * 5
+                });
+            }
+        }
+
+        // AI Logic
+        if (this.type !== state.selectedCar && this.y === this.y) { // Check if AI (simple check: if not player index 0, but here type check is weak. Better: pass isAI flag)
+            // ... handled in constructor/update
         }
 
         this.speed *= CONFIG.FRICTION;
@@ -402,7 +474,111 @@ class Car {
         this.x += this.velX;
         this.y += this.velY;
 
+        // Collision Check
+        this.checkCollisions();
+
         audio.updateEngine(this.speed, turn !== 0);
+    }
+
+    checkCollisions() {
+        // 1. World Boundaries
+        if (this.x < -CONFIG.WORLD_SIZE / 2 || this.x > CONFIG.WORLD_SIZE / 2 ||
+            this.y < -CONFIG.WORLD_SIZE / 2 || this.y > CONFIG.WORLD_SIZE / 2) {
+            this.speed *= -0.5; // Bounce back
+            this.x -= this.velX * 2;
+            this.y -= this.velY * 2;
+        }
+
+        // 2. Buildings
+        for (let b of BUILDINGS) {
+            const dx = this.x - b.x;
+            const dy = this.y - b.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 80) { // Simple radius collision
+                this.speed *= -0.3;
+                this.x -= this.velX * 1.5;
+                this.y -= this.velY * 1.5;
+            }
+        }
+    }
+
+    aiControl() {
+        // 1. Find Road
+        let targetAngle = -Math.PI / 2; // Default Up/North
+
+        // Find nearest road
+        let nearestRoad = null;
+        let minDist = Infinity;
+
+        for (let r of ROADS) {
+            let cx = r.x + r.w / 2;
+            let cy = r.y + r.h / 2;
+            let d = Math.abs(this.x - cx) + Math.abs(this.y - cy);
+            if (d < minDist) {
+                minDist = d;
+                nearestRoad = r;
+            }
+        }
+
+        if (nearestRoad) {
+            let speedLimit = CONFIG.MAX_SPEED;
+            if (state.difficulty === 'easy') speedLimit *= 0.6;
+            if (state.difficulty === 'medium') speedLimit *= 0.8;
+
+            // Target Speed Control
+            let targetGas = 0.8;
+            if (Math.abs(this.speed) > speedLimit) targetGas = 0;
+
+            // Determine direction: Vertical or Horizontal
+            if (nearestRoad.w < nearestRoad.h) {
+                // Vertical Road
+                let tx = nearestRoad.x + nearestRoad.w / 2 + this.aiOffset;
+                let dx = tx - this.x;
+                let angleToTarget = -Math.PI / 2 + (dx * 0.005);
+                targetAngle = angleToTarget;
+            } else {
+                // Horizontal Road (Not dominant yet)
+            }
+
+            let diff = targetAngle - this.angle;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+
+            let turn = 0;
+            if (diff > 0.05) turn = 1;
+            if (diff < -0.05) turn = -1;
+
+            // Avoidance
+            for (let other of state.cars) {
+                if (other === this) continue;
+                let dx = other.x - this.x;
+                let dy = other.y - this.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 200) {
+                    let angleToOther = Math.atan2(dy, dx);
+                    let angleDiff = angleToOther - this.angle;
+                    if (Math.abs(angleDiff) < 0.5) return { gas: -0.5, turn: turn * -1 };
+                }
+            }
+
+            return { gas: targetGas, turn: turn };
+        }
+
+        return { gas: 0.8, turn: 0 };
+    }
+
+    generatePlate() {
+        const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const l1 = letters[Math.floor(Math.random() * letters.length)];
+        const l2 = letters[Math.floor(Math.random() * letters.length)];
+        const n1 = Math.floor(Math.random() * 100);
+        const n2 = Math.floor(Math.random() * 10000);
+        return `KL-${n1}-${l1}${l2}-${n2}`;
+    }
+
+    getRandomName() {
+        const names = ["Raju", "Biju", "Shibu", "Jose", "Unni", "Kuttan", "Appu"];
+        return names[Math.floor(Math.random() * names.length)];
     }
 
     draw(ctx) {
@@ -419,19 +595,6 @@ class Car {
         // Draw Car
         ctx.drawImage(this.img, -this.width / 2, -this.height / 2, this.width, this.height);
 
-        // Headlights (Asphalt style glow)
-        if (state.screen === 'drive') {
-            ctx.globalCompositeOperation = 'screen';
-            ctx.fillStyle = 'rgba(255, 255, 200, 0.6)';
-            ctx.beginPath();
-            ctx.moveTo(-20, -50);
-            ctx.lineTo(-60, -250);
-            ctx.lineTo(60, -250);
-            ctx.lineTo(20, -50);
-            ctx.fill();
-            ctx.globalCompositeOperation = 'source-over';
-        }
-
         ctx.restore();
     }
 }
@@ -445,6 +608,14 @@ function init() {
         document.getElementById('loading').classList.add('hidden');
         showMenu();
         generateWorld();
+
+        const startMusic = () => {
+            bgMusic.play().catch(e => console.log("Audio play failed:", e));
+            document.removeEventListener('click', startMusic);
+            document.removeEventListener('keydown', startMusic);
+        };
+        document.addEventListener('click', startMusic);
+        document.addEventListener('keydown', startMusic);
     });
 }
 
@@ -470,6 +641,10 @@ function showMenu() {
     document.getElementById('main-menu').classList.remove('hidden');
     document.getElementById('hud').classList.remove('visible');
 
+    if (bgMusic.paused && bgMusic.currentTime > 0) {
+        bgMusic.play().catch(e => console.log("Resume failed:", e));
+    }
+
     requestAnimationFrame(gameLoop);
 }
 
@@ -484,10 +659,17 @@ window.startGame = function () {
     document.getElementById('hud').classList.add('visible');
 
     state.cars = [new Car(state.selectedCar, 0, 0)];
+
+    // Add AI Bots
+    for (let i = 0; i < 3; i++) {
+        let aiType = ['ferrari', 'lamborghini', 'porsche'][i % 3];
+        let startX = (i + 1) * 100; // Offset
+        state.cars.push(new Car(aiType, startX, 0, true));
+    }
     state.screen = 'drive';
 
-    // Auto start music for game feel
-    if (!audio.isPlaying) toggleMusic();
+    bgMusic.pause();
+    bgMusic.currentTime = 0;
 }
 
 function gameLoop() {
@@ -502,13 +684,12 @@ function gameLoop() {
         drawCoconutTree(ctx, -200, 50, 1.8);
         drawCoconutTree(ctx, 200, 80, 1.4);
         ctx.restore();
-
-        // Menu Title Wobble?
         requestAnimationFrame(gameLoop);
         return;
     }
 
-    const player = state.cars[0];
+    // Logic Hazard Fix: Do not sort state.cars in place!
+    const player = state.cars.find(c => !c.isAI) || state.cars[0];
 
     // Camera follow
     state.camera.x = player.x - canvas.width / 2;
@@ -523,11 +704,13 @@ function gameLoop() {
     const viewT = state.camera.y - 500;
     const viewB = state.camera.y + canvas.height + 500;
 
+    // Draw Roads (Bottom Layer)
+    drawRoads(ctx, viewL, viewR, viewT, viewB);
+
     // Draw Water
     state.world.waters.forEach(w => drawWater(ctx, w));
 
-    // Draw Trees (Sorted by Y for depth)
-    // Simple sort for now, optimize later if needed
+    // Draw Trees
     const visibleTrees = state.world.trees.filter(tree =>
         tree.x > viewL && tree.x < viewR && tree.y > viewT && tree.y < viewB
     );
@@ -537,11 +720,58 @@ function gameLoop() {
         drawCoconutTree(ctx, tree.x, tree.y, tree.scale);
     });
 
-    // Draw Player
-    player.update();
-    player.draw(ctx);
+    // Draw Buildings
+    BUILDINGS.forEach(b => drawBuilding(ctx, b));
 
-    ctx.restore();
+    // Draw Cars (Sort copy by Y for depth)
+    const renderList = [...state.cars].sort((a, b) => a.y - b.y);
+    renderList.forEach(car => {
+        car.update();
+        car.draw(ctx);
+    });
+
+    // Night Overlay
+    state.dayTime += 0.005; // Time passing
+    if (state.dayTime > 24) state.dayTime = 0;
+
+    const hour = state.dayTime;
+    let darkness = 0;
+    if (hour > 18 || hour < 6) {
+        if (hour > 18) darkness = (hour - 18) / 2;
+        if (hour > 20) darkness = 0.7;
+        if (hour < 6) darkness = 0.7 - (hour / 6) * 0.7;
+        darkness = 0.7;
+
+        // Draw Headlights Logic
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        ctx.translate(player.x, player.y);
+        ctx.rotate(player.angle + Math.PI / 2);
+
+        // Beam
+        ctx.fillStyle = `rgba(255, 255, 200, 0.4)`;
+        ctx.beginPath();
+        ctx.moveTo(-20, -10);
+        ctx.lineTo(-100, -400);
+        ctx.lineTo(100, -400);
+        ctx.lineTo(20, -10);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    ctx.restore(); // Restore camera transform
+
+    // Draw UI/Overlay (Screen Space)
+    if (darkness > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${darkness})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Time UI
+    ctx.fillStyle = 'white';
+    ctx.font = '16px monospace';
+    ctx.fillText(`TIME: ${Math.floor(hour)}:00`, 20, 80);
 
     // HUD Update
     const speedKm = Math.floor(Math.abs(player.speed) * 15);
