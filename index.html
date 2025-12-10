@@ -53,6 +53,14 @@
 
         <!-- In-Game HUD -->
         <div id="hud">
+            <!-- Audio Element -->
+            <audio id="bg-music" src="music/background.mp3" loop></audio>
+
+            <!-- Mute Button (Top Right) -->
+            <button id="mute-btn" class="glass-btn mute-btn" onclick="toggleMute()">
+                🔊
+            </button>
+
             <div class="speed-gauge">
                 <div style="display:flex; align-items: baseline;">
                     <span class="speed-value" id="speed">0</span>

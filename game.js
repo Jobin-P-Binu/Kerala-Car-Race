@@ -63,10 +63,25 @@ function resize() {
 resize();
 
 // ============================================
+// ============================================
 // AUDIO SYSTEM (Engine + Music)
-// Background Music
-const bgMusic = new Audio('background.mp3');
-bgMusic.loop = true;
+// Old bgMusic removed in favor of HTML5 <audio> tag
+const audioTag = document.getElementById('bg-music');
+audioTag.volume = 0.5; // Default 50%
+
+window.toggleMute = function () {
+    audioTag.muted = !audioTag.muted;
+    const btn = document.getElementById('mute-btn');
+    btn.innerHTML = audioTag.muted ? '🔇' : '🔊';
+}
+
+function initAudio() {
+    // Attempt to unlock audio on first interaction
+    if (audioTag.paused) {
+        audioTag.play().catch(e => console.log("Audio waiting for interaction"));
+    }
+    if (!audio.initialized) audio.init();
+}
 
 // ============================================
 class AudioController {
@@ -272,14 +287,8 @@ function generateWorld() {
         }
     }
 
-    // Add Special Buildings
-    for (let i = 0; i < 20; i++) {
-        BUILDINGS.push({
-            type: Math.random() > 0.5 ? 'tea_shop' : 'bus_stop',
-            x: (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.2, // Near center
-            y: (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.2
-        });
-    }
+    // Add Special Buildings - REMOVED as per request
+    // Tea shops and Bus stops removed.
 }
 
 function drawCoconutTree(ctx, x, y, scale) {
@@ -432,7 +441,7 @@ class Car {
 
         // AI State
         this.targetNode = null;
-        this.aiOffset = (Math.random() - 0.5) * 50; // Lane offset
+        this.aiOffset = 0; // Fixed alignment
     }
 
     update() {
@@ -642,7 +651,7 @@ function init() {
         generateWorld();
 
         const startMusic = () => {
-            bgMusic.play().catch(e => console.log("Audio play failed:", e));
+            initAudio(); // Unlock audio
             document.removeEventListener('click', startMusic);
             document.removeEventListener('keydown', startMusic);
         };
@@ -676,8 +685,8 @@ function showMenu() {
     document.getElementById('main-menu').classList.remove('hidden');
     document.getElementById('hud').classList.remove('visible');
 
-    if (bgMusic.paused && bgMusic.currentTime > 0) {
-        bgMusic.play().catch(e => console.log("Resume failed:", e));
+    if (audioTag.paused && audioTag.currentTime > 0) {
+        audioTag.play().catch(e => console.log("Resume failed:", e));
     }
 
     requestAnimationFrame(gameLoop);
@@ -693,18 +702,29 @@ window.startGame = function () {
     document.getElementById('main-menu').classList.add('hidden');
     document.getElementById('hud').classList.add('visible');
 
-    state.cars = [new Car(state.selectedCar, 0, 0)];
+    // Add AI Bots with strict lane alignment
+    // Road w: 200. Lanes at 50 (Left) and 150 (Right). Road starts at x=0.
+    // Wait, generated road is: x: 0, w: 200. Center x=100.
+    // Lanes: center left = 50, center right = 150.
 
-    // Add AI Bots
+    // Player spawn (Left Lane)
+    state.cars = [new Car(state.selectedCar, 50, 0)];
+
+    const aiConfigs = [
+        { type: 'ferrari', x: 150, y: 300 }, // Right lane, behind/ahead
+        { type: 'lamborghini', x: 50, y: -400 }, // Left lane, ahead
+        { type: 'porsche', x: 150, y: -800 } // Right lane, ahead
+    ];
+
     for (let i = 0; i < 3; i++) {
-        let aiType = ['ferrari', 'lamborghini', 'porsche'][i % 3];
-        let startX = (i + 1) * 100; // Offset
-        state.cars.push(new Car(aiType, startX, 0, true));
+        let conf = aiConfigs[i];
+        state.cars.push(new Car(conf.type, conf.x, conf.y, true));
     }
     state.screen = 'drive';
 
-    bgMusic.pause();
-    bgMusic.currentTime = 0;
+    // music is continuous, restart on new game if needed
+    audioTag.currentTime = 0;
+    audioTag.play().catch(e => console.warn("Music play blocked", e));
 }
 
 function gameLoop() {
@@ -765,48 +785,8 @@ function gameLoop() {
         car.draw(ctx);
     });
 
-    // Night Overlay
-    state.dayTime += 0.005; // Time passing
-    if (state.dayTime > 24) state.dayTime = 0;
-
-    const hour = state.dayTime;
-    let darkness = 0;
-    if (hour > 18 || hour < 6) {
-        if (hour > 18) darkness = (hour - 18) / 2;
-        if (hour > 20) darkness = 0.7;
-        if (hour < 6) darkness = 0.7 - (hour / 6) * 0.7;
-        darkness = 0.7;
-
-        // Draw Headlights Logic
-        ctx.save();
-        ctx.globalCompositeOperation = 'screen';
-        ctx.translate(player.x, player.y);
-        ctx.rotate(player.angle + Math.PI / 2);
-
-        // Beam
-        ctx.fillStyle = `rgba(255, 255, 200, 0.4)`;
-        ctx.beginPath();
-        ctx.moveTo(-20, -10);
-        ctx.lineTo(-100, -400);
-        ctx.lineTo(100, -400);
-        ctx.lineTo(20, -10);
-        ctx.fill();
-
-        ctx.restore();
-    }
-
-    ctx.restore(); // Restore camera transform
-
-    // Draw UI/Overlay (Screen Space)
-    if (darkness > 0) {
-        ctx.fillStyle = `rgba(0,0,0,${darkness})`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    // Time UI
-    ctx.fillStyle = 'white';
-    ctx.font = '16px monospace';
-    ctx.fillText(`TIME: ${Math.floor(hour)}:00`, 20, 80);
+    // Night Overlay REMOVED
+    // Time UI REMOVED
 
     // HUD Update
     const speedKm = Math.floor(Math.abs(player.speed) * 15);

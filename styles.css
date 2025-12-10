@@ -260,3 +260,31 @@ h1 {
         transform: rotate(360deg);
     }
 }
+
+/* Audio Controls */
+.mute-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    pointer-events: auto;
+    /* Enable clicks */
+    z-index: 1000;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    color: var(--primary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.mute-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
