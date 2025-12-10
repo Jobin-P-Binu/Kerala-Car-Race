@@ -75,24 +75,13 @@ window.toggleMute = function () {
     btn.innerHTML = audioTag.muted ? '🔇' : '🔊';
 }
 
-function initAudio() {
-    // Attempt to unlock audio on first interaction
-    if (audioTag.paused) {
-        audioTag.play().catch(e => console.log("Audio waiting for interaction"));
-    }
-    if (!audio.initialized) audio.init();
-}
-
 // ============================================
 class AudioController {
     constructor() {
         this.ctx = null;
         this.initialized = false;
-
-        // Engine
         this.engineOsc = null;
         this.engineGain = null;
-
         // Ambience
         this.windGain = null;
     }
