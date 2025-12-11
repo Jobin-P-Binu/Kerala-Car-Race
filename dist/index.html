@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kerala Drive: Open World</title>
+    <link rel="stylesheet" href="styles.css">
+    <meta name="description" content="Explore the scenic landscapes of Kerala in this open-world driving experience.">
+</head>
+
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <!-- Loading Screen -->
+        <div id="loading" class="screen">
+            <div class="loader"></div>
+            <p style="margin-top: 1rem; letter-spacing: 2px;">GENERATING KERALA...</p>
+        </div>
+
+        <!-- Main Menu -->
+        <div id="main-menu" class="screen hidden">
+            <h1>Kerala Drive</h1>
+            <div class="subtitle">Open World Expedition</div>
+
+            <div class="car-selection">
+                <div class="car-card selected" onclick="selectCar('ferrari', this)">
+                    <img src="assets/car_ferrari.png" alt="Ferrari 488">
+                    <h3>Ferrari 488</h3>
+                </div>
+                <div class="car-card" onclick="selectCar('lamborghini', this)">
+                    <img src="assets/car_lamborghini.png" alt="Lamborghini">
+                    <h3>Lamborghini</h3>
+                </div>
+                <div class="car-card" onclick="selectCar('porsche', this)">
+                    <img src="assets/car_porsche.png" alt="Porsche 911">
+                    <h3>Porsche 911</h3>
+                </div>
+            </div>
+
+            <button class="btn" onclick="startGame()">Start Driving</button>
+
+            <div class="controls-hint" style="position: relative; margin-top: 3rem; bottom: auto;">
+                <div class="key">W</div>
+                <div class="key">A</div>
+                <div class="key">S</div>
+                <div class="key">D</div>
+                <span style="display: flex; align-items: center; margin-left:10px; font-size: 0.8rem; color: #aaa;">TO
+                    DRIVE</span>
+            </div>
+            <div style="margin-top: 1rem; color: #888; font-size: 0.8rem;">PRESS 'M' TO TOGGLE MUSIC</div>
+        </div>
+
+        <!-- In-Game HUD -->
+        <div id="hud">
+            <div class="music-hint">MUSIC: <span id="music-status">ON</span> (M)</div>
+
+            <div class="speed-gauge">
+                <div style="display:flex; align-items: baseline;">
+                    <span class="speed-value" id="speed">0</span>
+                    <span class="speed-unit">KM/H</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+
+</html>

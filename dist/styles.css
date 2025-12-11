@@ -1,0 +1,262 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;900&family=Rajdhani:wght@500;600;700&display=swap');
+
+:root {
+    --primary: #cddc39;
+    /* Kerala Green/Yellow */
+    --accent: #29b6f6;
+    --dark: #1b5e20;
+    --glass: rgba(0, 0, 0, 0.4);
+    --glass-border: rgba(255, 255, 255, 0.2);
+    --text: #ffffff;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+body {
+    background-color: var(--dark);
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    color: var(--text);
+}
+
+/* Canvas Layer */
+#gameCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background-color: #66bb6a;
+}
+
+/* UI Layer */
+#ui-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 2rem;
+}
+
+/* Screens */
+.screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 50, 0, 0.6);
+    backdrop-filter: blur(10px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    pointer-events: auto;
+    transition: opacity 0.5s ease;
+}
+
+.screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Menu Styling */
+h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 5rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: linear-gradient(to right, #fff, #cddc39);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+}
+
+.subtitle {
+    font-size: 1.5rem;
+    color: var(--primary);
+    letter-spacing: 4px;
+    margin-bottom: 2rem;
+    text-transform: uppercase;
+}
+
+.car-selection {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.car-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 160px;
+}
+
+.car-card:hover,
+.car-card.selected {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: var(--primary);
+    transform: translateY(-10px);
+    box-shadow: 0 15px 40px rgba(205, 220, 57, 0.2);
+}
+
+.car-card img {
+    height: 100px;
+    object-fit: contain;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
+}
+
+.car-card h3 {
+    font-weight: 500;
+}
+
+.btn {
+    background: var(--primary);
+    color: var(--dark);
+    border: none;
+    padding: 1rem 3rem;
+    font-size: 1.2rem;
+    font-weight: 700;
+    border-radius: 50px;
+    cursor: pointer;
+    font-family: 'Rajdhani', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 0 20px rgba(205, 220, 57, 0.4);
+}
+
+.btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 40px rgba(205, 220, 57, 0.6);
+}
+
+/* HUD Styling */
+#hud {
+    z-index: 10;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    /* Bottom alignment */
+    align-items: flex-end;
+    /* Right alignment */
+    opacity: 0;
+    transition: opacity 0.5s;
+    pointer-events: none;
+}
+
+#hud.visible {
+    opacity: 1;
+}
+
+.speed-gauge {
+    position: relative;
+    width: 200px;
+    height: 150px;
+    background: radial-gradient(circle at bottom right, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0) 70%);
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    flex-direction: column;
+    padding: 20px;
+    border-radius: 20px;
+}
+
+.speed-value {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 5rem;
+    font-weight: 700;
+    line-height: 0.8;
+    color: var(--primary);
+}
+
+.speed-unit {
+    font-size: 1.2rem;
+    color: #888;
+    margin-right: 10px;
+}
+
+.music-hint {
+    position: absolute;
+    top: 2rem;
+    right: 2rem;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1rem;
+    text-transform: uppercase;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 5px 15px;
+    border-radius: 20px;
+}
+
+/* Controls Hint */
+.controls-hint {
+    position: absolute;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    opacity: 0.7;
+}
+
+.key {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+/* Loading */
+#loading {
+    background: #000;
+    z-index: 200;
+}
+
+.loader {
+    width: 50px;
+    height: 50px;
+    border: 4px solid var(--primary);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
