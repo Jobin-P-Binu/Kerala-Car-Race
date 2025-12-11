@@ -1,30 +1,30 @@
 // Game Configuration
 const CONFIG = {
-    MAX_SPEED: 25, // Faster for "Asphalt" feel
-    ACCELERATION: 0.4,
-    TURNING_SPEED: 0.05,
+    MAX_SPEED: 40, // Increased for 3D sensation
+    ACCELERATION: 0.6,
+    TURNING_SPEED: 0.04,
     FRICTION: 0.96,
     OFFROAD_FRICTION: 0.9,
-    WORLD_SIZE: 20000,
-    CHUNK_SIZE: 1000
+    CAMERA_HEIGHT: 150,
+    CAMERA_DIST: 400, // Distance behind car
+    FOV: 600, // Perspective scale
+    ROAD_WIDTH: 400
 };
 
 // Game State
 const state = {
     screen: 'loading',
     selectedCar: 'ferrari',
-    difficulty: 'medium', // easy, medium, hard
+    difficulty: 'medium',
     cars: [],
-    camera: { x: 0, y: 0 },
-    particles: [], // For drift smoke
-    leaderboard: [],
+    camera: { x: 0, y: 0, z: 0, angle: 0 },
+    particles: [],
+    // World now just a list of objects for the highway
     world: {
-        trees: [],
-        waters: [],
-        seed: 123
+        backgroundObjects: [], // Scenery
+        roadSegments: []
     },
-    dayTime: 0, // 0 to 24 hours
-    sunIntensity: 1
+    totalDistance: 0
 };
 
 // Assets
@@ -34,15 +34,15 @@ const assets = {
         car_ferrari: 'assets/car_ferrari.png',
         car_lamborghini: 'assets/car_lamborghini.png',
         car_porsche: 'assets/car_porsche.png',
-        bg_music: 'background.mp3'
+        bg_music: 'music/bgm.mp3' // Placeholder key, logic handled via HTML tag
     }
 };
 
 // Setup Canvas
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d', { alpha: false });
+const ctx = canvas.getContext('2d', { alpha: false }); // No alpha for background perf
 
-// Input Handling
+// Input
 const keys = {
     w: false, a: false, s: false, d: false,
     ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false,
@@ -63,11 +63,10 @@ function resize() {
 resize();
 
 // ============================================
+// AUDIO SYSTEM
 // ============================================
-// AUDIO SYSTEM (Engine + Music)
-// Old bgMusic removed in favor of HTML5 <audio> tag
 const audioTag = document.getElementById('bg-music');
-audioTag.volume = 0.5; // Default 50%
+audioTag.volume = 0.5;
 
 window.toggleMute = function () {
     audioTag.muted = !audioTag.muted;
@@ -75,29 +74,19 @@ window.toggleMute = function () {
     btn.innerHTML = audioTag.muted ? '🔇' : '🔊';
 }
 
-// ============================================
 class AudioController {
     constructor() {
         this.ctx = null;
         this.initialized = false;
         this.engineOsc = null;
         this.engineGain = null;
-        // Ambience
-        this.windGain = null;
     }
 
     init() {
         if (this.initialized) return;
         try {
             this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-            // Master Compressor to glue sounds together
-            this.compressor = this.ctx.createDynamicsCompressor();
-            this.compressor.connect(this.ctx.destination);
-
             this.setupEngine();
-            this.setupAmbience();
-
             this.initialized = true;
         } catch (e) { console.warn('Audio init failed', e); }
     }
@@ -106,331 +95,154 @@ class AudioController {
         this.engineOsc = this.ctx.createOscillator();
         this.engineOsc.type = 'sawtooth';
         this.engineOsc.frequency.value = 60;
-
         this.engineGain = this.ctx.createGain();
         this.engineGain.gain.value = 0;
-
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 400;
-
-        this.engineOsc.connect(filter);
-        filter.connect(this.engineGain);
-        this.engineGain.connect(this.compressor);
-
+        this.engineOsc.connect(this.engineGain);
+        this.engineGain.connect(this.ctx.destination);
         this.engineOsc.start();
-    }
-
-    setupAmbience() {
-        const bufferSize = this.ctx.sampleRate * 2; // 2 sec noise
-        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-
-        const noise = this.ctx.createBufferSource();
-        noise.buffer = buffer;
-        noise.loop = true;
-
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 400;
-
-        this.windGain = this.ctx.createGain();
-        this.windGain.gain.value = 0;
-
-        noise.connect(filter);
-        filter.connect(this.windGain);
-        this.windGain.connect(this.ctx.destination);
-        noise.start();
     }
 
     playHorn() {
         if (!this.initialized) return;
         const osc = this.ctx.createOscillator();
-        osc.type = 'sawtooth';
         osc.frequency.value = 400;
-
-        const osc2 = this.ctx.createOscillator();
-        osc2.type = 'sawtooth';
-        osc2.frequency.value = 500;
-
         const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-
         osc.connect(gain);
-        osc2.connect(gain);
         gain.connect(this.ctx.destination);
-
         osc.start();
-        osc2.start();
         osc.stop(this.ctx.currentTime + 0.5);
-        osc2.stop(this.ctx.currentTime + 0.5);
     }
 
-    updateEngine(speed, isTurning) {
+    updateEngine(speed) {
         if (!this.initialized) return;
         if (this.ctx.state === 'suspended') this.ctx.resume();
-
         const absSpeed = Math.abs(speed);
-        const freq = 60 + (absSpeed * 15);
-        this.engineOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.1);
-
-        const vol = 0.05 + (absSpeed / CONFIG.MAX_SPEED) * 0.1;
-        this.engineGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.1);
-
-        // Update Wind
-        if (this.windGain) {
-            const windVol = (absSpeed / CONFIG.MAX_SPEED) * 0.3;
-            this.windGain.gain.setTargetAtTime(windVol, this.ctx.currentTime, 0.5);
-        }
+        // Pitch rises with speed
+        this.engineOsc.frequency.setTargetAtTime(60 + absSpeed * 10, this.ctx.currentTime, 0.1);
+        // Volume rises with speed
+        this.engineGain.gain.setTargetAtTime(0.05 + (absSpeed / CONFIG.MAX_SPEED) * 0.1, this.ctx.currentTime, 0.1);
     }
 }
-
 const audio = new AudioController();
 
 document.addEventListener('click', () => { if (!audio.initialized) audio.init(); }, { once: true });
-document.addEventListener('keydown', () => { if (!audio.initialized) audio.init(); }, { once: true });
-
 
 // ============================================
-// WORLD GENERATION (KERALA THEME)
+// 3D PROJECTION MATH
 // ============================================
-const ROADS = [];
-const BUILDINGS = [];
+// Project world X,Y,Z to Screen X,Y,Scale
+function project(p, camera) {
+    // 1. Translate relative to camera
+    // We assume Camera is at (camX, camY, camZ) looking North (-Y)
+    // Actually, let's keep it simple: Camera looks "Forward" based on its angle.
+    // For this game, "Forward" is generally -Y in world space, but let's support rotation.
 
+    let relX = p.x - camera.x;
+    let relY = p.y - camera.y;
+    let relZ = p.z - camera.z; // World Z is typically 0 for ground objects
+
+    // 2. Rotate around Camera (Yaw)
+    // If angle is 0, we look -Y? Let's say Angle 0 is facing North (-Y)
+    // Standard rotation formula:
+    // x' = x cos - y sin
+    // y' = x sin + y cos
+    // Our "Forward" is -Y.
+    // Let's rotate so that "Forward" becomes +Z in camera space (depth).
+    // This is getting complex for a simple racer.
+    // Simpler Approch:
+    // Camera is strictly behind car. Camera Rotation matches Car Rotation.
+    // We rotate the world around the camera so the camera always points "Up" (screen -Y).
+
+    // Rotation Angle: -camera.angle - Math.PI/2 (to align North to Up)
+    const theta = -camera.angle - Math.PI / 2;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+
+    const rx = relX * cos - relY * sin;
+    const ry = relX * sin + relY * cos; // ry is now "depth" (negative if in front? wait)
+
+    // If facing North (Angle -PI/2):
+    // theta = -(-PI/2) - PI/2 = 0.
+    // rx = x, ry = y.
+    // If y is negative (North), ry is negative.
+    // We want +Depth to be Forward. So Let's invert Y.
+    const depth = -ry;
+
+    if (depth <= 10) return null; // Behind camera or too close
+
+    // 3. Perspective Projection
+    const scale = CONFIG.FOV / depth;
+    const sx = rx * scale + canvas.width / 2; // X is lateral
+    const sy = (relZ - CONFIG.CAMERA_HEIGHT) * scale + canvas.height / 2; // Z is Up/Down
+
+    return { x: sx, y: sy, scale: scale, depth: depth };
+}
+
+// ============================================
+// WORLD GENERATION (HIGHWAY & SCENERY)
+// ============================================
 function generateWorld() {
-    // 0. Road Network (Grid for now)
-    // Vertical Main Road
-    ROADS.push({ x: 0, y: -CONFIG.WORLD_SIZE / 2, w: 200, h: CONFIG.WORLD_SIZE });
+    // Generate a long highway
+    // We'll generate "Waypoints" or objects.
+    // For a smoother road, strict segments would be better, but "Objects on Side" works for free-roam feel.
+    // Road Segments: Just logical definitions for drawing the "Grey Strip"
 
-    // Horizontal Connectors
-    for (let i = 0; i < 10; i++) {
-        let y = (Math.random() - 0.5) * CONFIG.WORLD_SIZE * 0.8;
-        ROADS.push({ x: -CONFIG.WORLD_SIZE / 2, y: y, w: CONFIG.WORLD_SIZE, h: 180 });
-    }
+    let y = 0;
+    const length = 50000; // 50km
 
-    // 1. Water Bodies (Backwaters)
-    for (let i = 0; i < 40; i++) {
-        let startX = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
-        let startY = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
+    // Add trees on sides
+    for (let i = 0; i < 400; i++) {
+        // Left Side
+        state.world.backgroundObjects.push({
+            type: 'tree',
+            x: -CONFIG.ROAD_WIDTH / 2 - 200 - Math.random() * 300,
+            y: -i * 150 + (Math.random() * 50),
+            z: 0 // Ground
+        });
 
-        // Strict overlap check with ALL roads
-        let overlap = false;
-        const padding = 200; // Safe distance
-        for (let r of ROADS) {
-            if (startX > r.x - padding && startX < r.x + r.w + padding &&
-                startY > r.y - padding && startY < r.y + r.h + padding) {
-                overlap = true;
-                break;
-            }
-        }
-        if (overlap) continue;
+        // Right Side
+        state.world.backgroundObjects.push({
+            type: 'tree',
+            x: CONFIG.ROAD_WIDTH / 2 + 200 + Math.random() * 300,
+            y: -i * 150 + (Math.random() * 50),
+            z: 0
+        });
 
-        let width = 150 + Math.random() * 300;
-        let points = [];
-        let len = 50 + Math.random() * 80;
-
-        // Generate points and check them too (simple verify)
-        let valid = true;
-        for (let j = 0; j < len; j++) {
-            let px = startX + Math.sin(j * 0.1) * 800 + (Math.random() - 0.5) * 300;
-            let py = startY + j * 300;
-
-            // Re-check point against roads
-            for (let r of ROADS) {
-                if (px > r.x - padding && px < r.x + r.w + padding &&
-                    py > r.y - padding && py < r.y + r.h + padding) {
-                    valid = false;
-                    break;
-                }
-            }
-            if (!valid) break;
-
-            points.push({ x: px, y: py });
-        }
-
-        if (valid) {
-            state.world.waters.push({ points, width });
-        }
-    }
-
-    // 2. Coconut Trees & Buildings
-    for (let i = 0; i < 5000; i++) {
-        let x = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
-        let y = Math.random() * CONFIG.WORLD_SIZE - CONFIG.WORLD_SIZE / 2;
-
-        // Simple overlap check with roads
-        let onRoad = ROADS.some(r =>
-            x > r.x - r.w / 2 && x < r.x + r.w / 2 + r.w && // Box approx
-            y > r.y && y < r.y + r.h
-        ); // Very rough, refining later
-
-        if (!onRoad) {
-            state.world.trees.push({
-                x: x,
-                y: y,
-                scale: 1 + Math.random() * 0.8,
-                angle: Math.random() * Math.PI * 2
+        // Occasional Building
+        if (i % 20 === 0) {
+            const side = Math.random() > 0.5 ? 1 : -1;
+            state.world.backgroundObjects.push({
+                type: 'building',
+                x: side * (CONFIG.ROAD_WIDTH / 2 + 600),
+                y: -i * 150,
+                z: 0
             });
         }
     }
-
-    // Add Special Buildings - REMOVED as per request
-    // Tea shops and Bus stops removed.
-}
-
-function drawCoconutTree(ctx, x, y, scale) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(scale, scale);
-
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    ctx.beginPath();
-    ctx.ellipse(20, 20, 40, 15, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Trunk (Curved)
-    ctx.strokeStyle = '#4e342e';
-    ctx.lineWidth = 10;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.bezierCurveTo(20, -50, -10, -100, 10, -150);
-    ctx.stroke();
-
-    ctx.restore(); // Fix context leak
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(scale, scale);
-
-    // Leaves (Palm)
-    ctx.translate(10, -150);
-    ctx.strokeStyle = '#2e7d32'; // Kerala Green
-    ctx.lineWidth = 4;
-
-    for (let i = 0; i < 12; i++) {
-        ctx.save();
-        ctx.rotate(i * (Math.PI * 2 / 12));
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(40 + Math.random() * 10, -20, 80, 40);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    // Coconuts
-    ctx.fillStyle = '#ef6c00';
-    ctx.beginPath();
-    ctx.arc(-8, 5, 5, 0, Math.PI * 2);
-    ctx.arc(8, 5, 6, 0, Math.PI * 2);
-    ctx.arc(0, 12, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-}
-
-function drawWater(ctx, water) {
-    ctx.lineWidth = water.width;
-    ctx.strokeStyle = '#0277bd'; // Deep Backwater Blue
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    ctx.beginPath();
-    if (water.points.length > 0) {
-        ctx.moveTo(water.points[0].x, water.points[0].y);
-        for (let i = 1; i < water.points.length; i++) {
-            ctx.lineTo(water.points[i].x, water.points[i].y);
-        }
-    }
-    ctx.stroke();
-
-    // Banks (Mud/Sand)
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.lineWidth = water.width + 60;
-    ctx.strokeStyle = '#cddc39'; // Lime/Mud mix
-    ctx.stroke();
-    ctx.globalCompositeOperation = 'source-over';
-}
-
-function drawBuilding(ctx, b) {
-    ctx.save();
-    ctx.translate(b.x, b.y);
-    if (b.type === 'tea_shop') {
-        // Simple Huts
-        ctx.fillStyle = '#795548';
-        ctx.fillRect(-40, -40, 80, 80);
-        ctx.fillStyle = '#ff5722'; // Tile roof
-        ctx.beginPath();
-        ctx.moveTo(-50, -40);
-        ctx.lineTo(0, -90);
-        ctx.lineTo(50, -40);
-        ctx.fill();
-        ctx.fillStyle = 'white';
-        ctx.font = '12px Arial';
-        ctx.fillText("TEA", -10, 0);
-    } else {
-        // KSRTC Bus Stop
-        ctx.fillStyle = '#FFF176'; // Light Yellow
-        ctx.fillRect(-60, -40, 120, 80);
-        ctx.fillStyle = '#4CAF50'; // Green stripe
-        ctx.fillRect(-60, 0, 120, 20);
-        ctx.fillStyle = 'black';
-        ctx.font = 'bold 14px Arial';
-        ctx.fillText("KSRTC", -20, 15);
-    }
-    ctx.restore();
-}
-
-function drawRoads(ctx, viewL, viewR, viewT, viewB) {
-    ctx.fillStyle = '#37474f'; // Asphalt Gray
-    ROADS.forEach(r => {
-        // Simple culling
-        if (r.x + r.w > viewL && r.x < viewR && r.y + r.h > viewT && r.y < viewB) {
-            ctx.fillRect(r.x, r.y, r.w, r.h);
-            // White lines
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-            ctx.setLineDash([40, 40]);
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            if (r.w < r.h) { // Vertical
-                ctx.moveTo(r.x + r.w / 2, r.y);
-                ctx.lineTo(r.x + r.w / 2, r.y + r.h);
-            } else { // Horizontal
-                ctx.moveTo(r.x, r.y + r.h / 2);
-                ctx.lineTo(r.x + r.w, r.y + r.h / 2);
-            }
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-    });
 }
 
 // ============================================
-// CAR CLASS
+// CAR & ENTITIES
 // ============================================
 class Car {
     constructor(type, x, y, isAI = false) {
         this.type = type;
         this.x = x;
         this.y = y;
+        this.z = 0; // Altitude
         this.isAI = isAI;
-        this.angle = 0;
+        this.angle = -Math.PI / 2; // Facing North
         this.speed = 0;
-        this.img = assets.images[`car_${type}`] || assets.images['car_ferrari']; // Fallback
-        this.width = 70;
-        this.height = 120;
+        this.img = assets.images[`car_${type}`] || assets.images['car_ferrari'];
+        // Physical dimensions
+        this.width = 80;
+        this.length = 160;
+
+        this.nitro = 100;
         this.velX = 0;
         this.velY = 0;
-        this.drift = 0;
-        this.nitro = 100;
-        this.plate = this.generatePlate();
-        this.name = isAI ? this.getRandomName() : "YOU";
-
-        // AI State
-        this.targetNode = null;
-        this.aiOffset = 0; // Fixed alignment
     }
 
     update() {
@@ -440,57 +252,32 @@ class Car {
         let turn = 0;
 
         if (!this.isAI) {
-            // Player Inputs
             if (keys.w || keys.ArrowUp) gas = 1;
             if (keys.s || keys.ArrowDown) gas = -1;
             if (keys.a || keys.ArrowLeft) turn = -1;
             if (keys.d || keys.ArrowRight) turn = 1;
 
-            // Nitro Input
+            // Nitro
             if (keys.Shift && this.nitro > 0 && gas > 0) {
-                gas *= 2.0; // Boost acceleration
+                gas *= 2.0;
                 this.nitro -= 0.5;
-            } else if (this.nitro < 100) {
-                this.nitro += 0.1; // Regen
-            }
+            } else if (this.nitro < 100) this.nitro += 0.2;
         } else {
-            // AI Inputs
-            const result = this.aiControl();
-            gas = result.gas;
-            turn = result.turn;
+            // Simple AI: Drive forward, stay in lane
+            gas = 0.8;
+            // Lane Assist
+            if (this.x > 200) turn = -0.5;
+            if (this.x < -200) turn = 0.5;
         }
 
         // Physics
         this.speed += gas * CONFIG.ACCELERATION;
-
-        if (Math.abs(this.speed) > 0.5) {
-            const dir = this.speed > 0 ? 1 : -1;
-            // Drifting mechanic: looser turning at high speed
-            let turnFactor = CONFIG.TURNING_SPEED * dir;
-            if (gas === 0 && Math.abs(this.speed) > 10) turnFactor *= 1.5; // Handbrake turn feel
-
-            this.angle += turn * turnFactor;
-
-            // Drift Smoke
-            if (Math.abs(turn) > 0.8 && Math.abs(this.speed) > 15) {
-                state.particles.push({
-                    x: this.x - Math.cos(this.angle) * 40 + (Math.random() - 0.5) * 10,
-                    y: this.y - Math.sin(this.angle) * 40 + (Math.random() - 0.5) * 10,
-                    life: 1,
-                    size: 5 + Math.random() * 5
-                });
-            }
-        }
-
-        // AI Logic
-        if (this.type !== state.selectedCar && this.y === this.y) { // Check if AI (simple check: if not player index 0, but here type check is weak. Better: pass isAI flag)
-            // ... handled in constructor/update
-        }
-
         this.speed *= CONFIG.FRICTION;
 
-        if (this.speed > CONFIG.MAX_SPEED) this.speed = CONFIG.MAX_SPEED;
-        if (this.speed < -CONFIG.MAX_SPEED / 2) this.speed = -CONFIG.MAX_SPEED / 2;
+        // Turning (Drift feel)
+        if (Math.abs(this.speed) > 1) {
+            this.angle += turn * CONFIG.TURNING_SPEED * (this.speed > 0 ? 1 : -1);
+        }
 
         this.velX = Math.cos(this.angle) * this.speed;
         this.velY = Math.sin(this.angle) * this.speed;
@@ -498,133 +285,52 @@ class Car {
         this.x += this.velX;
         this.y += this.velY;
 
-        // Collision Check
-        this.checkCollisions();
-
-        audio.updateEngine(this.speed, turn !== 0);
-    }
-
-    checkCollisions() {
-        // 1. World Boundaries
-        if (this.x < -CONFIG.WORLD_SIZE / 2 || this.x > CONFIG.WORLD_SIZE / 2 ||
-            this.y < -CONFIG.WORLD_SIZE / 2 || this.y > CONFIG.WORLD_SIZE / 2) {
-            this.speed *= -0.5; // Bounce back
-            this.x -= this.velX * 2;
-            this.y -= this.velY * 2;
+        // Road Boundaries (Soft Wall)
+        if (Math.abs(this.x) > CONFIG.ROAD_WIDTH / 2 + 200) {
+            this.speed *= 0.9; // Slow down off-road
         }
 
-        // 2. Buildings
-        for (let b of BUILDINGS) {
-            const dx = this.x - b.x;
-            const dy = this.y - b.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 80) { // Simple radius collision
-                this.speed *= -0.3;
-                this.x -= this.velX * 1.5;
-                this.y -= this.velY * 1.5;
-            }
+        if (!this.isAI) {
+            audio.updateEngine(this.speed);
         }
     }
 
-    aiControl() {
-        // 1. Find Road
-        let targetAngle = -Math.PI / 2; // Default Up/North
+    draw(ctx, camera) {
+        const p = project(this, camera);
+        if (!p) return;
 
-        // Find nearest road
-        let nearestRoad = null;
-        let minDist = Infinity;
-
-        for (let r of ROADS) {
-            let cx = r.x + r.w / 2;
-            let cy = r.y + r.h / 2;
-            let d = Math.abs(this.x - cx) + Math.abs(this.y - cy);
-            if (d < minDist) {
-                minDist = d;
-                nearestRoad = r;
-            }
-        }
-
-        if (nearestRoad) {
-            let speedLimit = CONFIG.MAX_SPEED;
-            if (state.difficulty === 'easy') speedLimit *= 0.6;
-            if (state.difficulty === 'medium') speedLimit *= 0.8;
-
-            // Target Speed Control
-            let targetGas = 0.8;
-            if (Math.abs(this.speed) > speedLimit) targetGas = 0;
-
-            // Determine direction: Vertical or Horizontal
-            if (nearestRoad.w < nearestRoad.h) {
-                // Vertical Road
-                let tx = nearestRoad.x + nearestRoad.w / 2 + this.aiOffset;
-                let dx = tx - this.x;
-                let angleToTarget = -Math.PI / 2 + (dx * 0.005);
-                targetAngle = angleToTarget;
-            } else {
-                // Horizontal Road (Not dominant yet)
-            }
-
-            let diff = targetAngle - this.angle;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-
-            let turn = 0;
-            if (diff > 0.05) turn = 1;
-            if (diff < -0.05) turn = -1;
-
-            // Avoidance
-            for (let other of state.cars) {
-                if (other === this) continue;
-                let dx = other.x - this.x;
-                let dy = other.y - this.y;
-                let dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 200) {
-                    let angleToOther = Math.atan2(dy, dx);
-                    let angleDiff = angleToOther - this.angle;
-                    if (Math.abs(angleDiff) < 0.5) return { gas: -0.5, turn: turn * -1 };
-                }
-            }
-
-            return { gas: targetGas, turn: turn };
-        }
-
-        return { gas: 0.8, turn: 0 };
-    }
-
-    generatePlate() {
-        const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        const l1 = letters[Math.floor(Math.random() * letters.length)];
-        const l2 = letters[Math.floor(Math.random() * letters.length)];
-        const n1 = Math.floor(Math.random() * 100);
-        const n2 = Math.floor(Math.random() * 10000);
-        return `KL-${n1}-${l1}${l2}-${n2}`;
-    }
-
-    getRandomName() {
-        const names = ["Raju", "Biju", "Shibu", "Jose", "Unni", "Kuttan", "Appu"];
-        return names[Math.floor(Math.random() * names.length)];
-    }
-
-    draw(ctx) {
         ctx.save();
-        ctx.translate(this.x, this.y);
+        ctx.translate(p.x, p.y);
+        // Rotation: Car Angle relative to Camera Angle
+        // Visual Rotation = CarAngle - CameraAngle - PI/2
+        // If CarAngle == CameraAngle (driving straight), Visual Rotation = -PI/2 (Up)
+        // Wait, Canvas rotation 0 is Right. -PI/2 is Up.
+        const relAngle = this.angle - camera.angle - Math.PI / 2;
 
-        // Fix: Rotate Ferrari and Lamborghini 180 degrees
-        let drawAngle = this.angle + Math.PI / 2;
-        if (this.type === 'ferrari' || this.type === 'lamborghini') {
-            drawAngle += Math.PI;
-        }
-        ctx.rotate(drawAngle);
+        // However, we are drawing a top-down sprite in 3D?
+        // Ideally we need 'Rear View' sprites.
+        // Since we only have top-down sprites, we cheat:
+        // We scale Y less than X to make it look flat ?
+        // Or just rotate it. 
+        // Let's rotate it to face Up (-PI/2) plus relative turn.
 
-        // Shadow
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur = 20;
-        ctx.shadowOffsetX = 5;
-        ctx.shadowOffsetY = 5;
+        // Actually, pseudo-3D usually uses sprites that are pre-rendered at angles.
+        // We only have top-down. 
+        // "Mode 7" style: The sprite lies flat on the ground.
+        // To simulate this with `drawImage`, we can skew/scale.
+        // Simple: Just draw it standard for now, user asked for "convert to 3d real world" 
+        // using existing assets which are top down. 
+        // Best approach for top-down assets in 3D:
+        // Draw them facing 'Up' on screen, maybe squish height to look like they are on road.
 
-        // Draw Car
-        ctx.drawImage(this.img, -this.width / 2, -this.height / 2, this.width, this.height);
+        ctx.rotate(relAngle);
+        ctx.scale(p.scale, p.scale * 0.6); // Squish Y for perspective
 
+        // Car Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(-this.width / 2 + 5, -this.length / 2 + 5, this.width, this.length);
+
+        ctx.drawImage(this.img, -this.width / 2, -this.length / 2, this.width, this.length);
         ctx.restore();
     }
 }
@@ -638,30 +344,17 @@ function init() {
         document.getElementById('loading').classList.add('hidden');
         showMenu();
         generateWorld();
-
-        const startMusic = () => {
-            initAudio(); // Unlock audio
-            document.removeEventListener('click', startMusic);
-            document.removeEventListener('keydown', startMusic);
-        };
-        document.addEventListener('click', startMusic);
-        document.addEventListener('keydown', startMusic);
     });
 }
 
 function loadAssets() {
     let promises = [];
     for (let key in assets.sources) {
-        // Fix: Skip non-image assets to prevent loading hang
         if (key === 'bg_music') continue;
-
         let p = new Promise((resolve) => {
             const img = new Image();
             img.src = assets.sources[key];
-            img.onload = () => {
-                assets.images[key] = img;
-                resolve();
-            };
+            img.onload = () => { assets.images[key] = img; resolve(); };
             img.onerror = resolve;
         });
         promises.push(p);
@@ -674,11 +367,9 @@ function showMenu() {
     document.getElementById('main-menu').classList.remove('hidden');
     document.getElementById('hud').classList.remove('visible');
 
-    if (audioTag.paused && audioTag.currentTime > 0) {
-        audioTag.play().catch(e => console.log("Resume failed:", e));
-    }
-
-    requestAnimationFrame(gameLoop);
+    // Play Menu Music
+    audioTag.currentTime = 0;
+    audioTag.play().catch(e => console.warn(e));
 }
 
 window.selectCar = function (type, el) {
@@ -688,97 +379,225 @@ window.selectCar = function (type, el) {
 }
 
 window.startGame = function () {
+    // STOP Menu Music
+    audioTag.pause();
+
     document.getElementById('main-menu').classList.add('hidden');
     document.getElementById('hud').classList.add('visible');
 
-    // Add AI Bots with strict lane alignment
-    // Road w: 200. Lanes at 50 (Left) and 150 (Right). Road starts at x=0.
-    // Wait, generated road is: x: 0, w: 200. Center x=100.
-    // Lanes: center left = 50, center right = 150.
-
-    // Player spawn (Left Lane)
+    // Init Player
     state.cars = [new Car(state.selectedCar, 50, 0)];
 
-    const aiConfigs = [
-        { type: 'ferrari', x: 150, y: 300 }, // Right lane, behind/ahead
-        { type: 'lamborghini', x: 50, y: -400 }, // Left lane, ahead
-        { type: 'porsche', x: 150, y: -800 } // Right lane, ahead
-    ];
+    // Init AI
+    state.cars.push(new Car('lamborghini', -100, -300, true));
+    state.cars.push(new Car('porsche', 100, -600, true));
 
-    for (let i = 0; i < 3; i++) {
-        let conf = aiConfigs[i];
-        state.cars.push(new Car(conf.type, conf.x, conf.y, true));
-    }
     state.screen = 'drive';
+    audio.init(); // Engine sound start
+    requestAnimationFrame(gameLoop);
+}
 
-    // music is continuous, restart on new game if needed
-    audioTag.currentTime = 0;
-    audioTag.play().catch(e => console.warn("Music play blocked", e));
+function drawCoconutTree(ctx, obj, camera) {
+    const p = project(obj, camera);
+    if (!p) return;
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(p.scale, p.scale);
+
+    // Simple Procedural Palm Tree (Upright billboard style)
+    // Since it's standing up, we draw it from bottom center up.
+
+    // Trunk
+    ctx.fillStyle = '#4e342e';
+    ctx.beginPath();
+    ctx.moveTo(-5, 0); // Base
+    ctx.lineTo(5, 0);
+    ctx.lineTo(0, -150); // Top
+    ctx.fill();
+
+    // Leaves
+    ctx.strokeStyle = '#2e7d32';
+    ctx.lineWidth = 4;
+    ctx.translate(0, -150);
+    for (let i = 0; i < 8; i++) {
+        ctx.save();
+        ctx.rotate(i * (Math.PI / 4));
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(30, -20, 60, 20);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Coconuts
+    ctx.fillStyle = 'orange';
+    ctx.beginPath(); ctx.arc(-5, 5, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(5, 5, 5, 0, Math.PI * 2); ctx.fill();
+
+    ctx.restore();
+}
+
+function drawBuilding(ctx, obj, camera) {
+    const p = project(obj, camera);
+    if (!p) return;
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(p.scale, p.scale);
+
+    // Simple Shop
+    ctx.fillStyle = '#fdd835';
+    ctx.fillRect(-60, -80, 120, 80); // Up from ground
+    ctx.fillStyle = '#ef5350'; // Roof
+    ctx.beginPath();
+    ctx.moveTo(-70, -80);
+    ctx.lineTo(0, -130);
+    ctx.lineTo(70, -80);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawRoad(ctx, camera) {
+    // Draw infinite road strip
+    // We draw segments from Z-Far to Z-Near
+    // Optimally: Just draw a big polygon for the road extending to horizon
+
+    // 1. Horizon Line
+    // 2. Road Polygons (Center Strip)
+
+    // Draw Road from player position to arbitrary distance forward
+    // Segmented approach for curvature would be best, but for straight infinite road:
+    // Just draw two lines converging to vanishing point?
+    // Let's draw discrete segments to allow for future curvature support
+
+    const segmentLength = 200;
+    const drawDist = 30; // 30 segments * 200 = 6000 units
+    const playerY = state.cars[0].y;
+
+    // Calculate start segment index
+    const startIdx = Math.floor(-playerY / segmentLength);
+
+    for (let i = drawDist; i >= 0; i--) { // Draw back to front
+        const z1 = (startIdx + i) * segmentLength;
+        const z2 = (startIdx + i + 1) * segmentLength;
+        const y1 = -z1; // World Y is negative forward
+        const y2 = -z2;
+
+        const p1 = project({ x: -CONFIG.ROAD_WIDTH / 2, y: y1, z: 0 }, camera);
+        const p2 = project({ x: CONFIG.ROAD_WIDTH / 2, y: y1, z: 0 }, camera);
+        const p3 = project({ x: CONFIG.ROAD_WIDTH / 2, y: y2, z: 0 }, camera);
+        const p4 = project({ x: -CONFIG.ROAD_WIDTH / 2, y: y2, z: 0 }, camera);
+
+        if (!p1 || !p3) continue; // Clipped
+
+        // Grass/Ground
+        // (Optional: Draw distinct grass color per segment for speed illusion)
+
+        // Road
+        ctx.fillStyle = (startIdx + i) % 2 === 0 ? '#37474f' : '#3e5059'; // Alternating asphalt
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.lineTo(p4.x, p4.y);
+        ctx.fill();
+
+        // Side Lines
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 4 * p1.scale;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p4.x, p4.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.stroke();
+
+        // Center Line
+        if ((startIdx + i) % 2 === 0) {
+            const pm1 = project({ x: 0, y: y1, z: 0 }, camera);
+            const pm2 = project({ x: 0, y: y2, z: 0 }, camera);
+            if (pm1 && pm2) {
+                ctx.strokeStyle = '#ffeb3b';
+                ctx.lineWidth = 4 * pm1.scale;
+                ctx.beginPath();
+                ctx.moveTo(pm1.x, pm1.y);
+                ctx.lineTo(pm2.x, pm2.y);
+                ctx.stroke();
+            }
+        }
+    }
 }
 
 function gameLoop() {
-    // Clear & Background (Kerala Green)
-    ctx.fillStyle = '#66bb6a';
+    // 1. Update State
+    const player = state.cars[0];
+
+    state.cars.forEach(c => c.update());
+
+    // Update Camera (Chase Cam)
+    // Target: Behind car, up. 
+    // Lerp for smoothness
+    const targetX = player.x - Math.sin(player.angle) * -CONFIG.CAMERA_DIST; // Actually player.x is position. 
+    // Camera X should follow Player X but smooth.
+    state.camera.x += (player.x - state.camera.x) * 0.1;
+
+    // Camera Y: Player is moving -Y. Camera should be at PlayerY + Dist
+    const targetY = player.y - Math.sin(player.angle) * -CONFIG.CAMERA_DIST;
+    // Just simple trailing for now:
+    state.camera.y = player.y + 400; // Fixed distance behind for straight road test
+    state.camera.z = CONFIG.CAMERA_HEIGHT;
+    state.camera.angle = -Math.PI / 2; // Fixed Looking North
+
+    // 2. Draw
+    // Sky
+    var grd = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
+    grd.addColorStop(0, "#2196f3");
+    grd.addColorStop(1, "#b3e5fc");
+    ctx.fillStyle = grd;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (state.screen === 'menu') {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        // Menu visualizer
-        drawCoconutTree(ctx, -200, 50, 1.8);
-        drawCoconutTree(ctx, 200, 80, 1.4);
-        ctx.restore();
-        requestAnimationFrame(gameLoop);
-        return;
-    }
+    // Ground (horizon down)
+    ctx.fillStyle = '#2e7d32'; // Kerala Green
+    ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
 
-    // Logic Hazard Fix: Do not sort state.cars in place!
-    const player = state.cars.find(c => !c.isAI) || state.cars[0];
+    // Road
+    drawRoad(ctx, state.camera);
 
-    // Camera follow
-    state.camera.x = player.x - canvas.width / 2;
-    state.camera.y = player.y - canvas.height / 2;
+    // Objects (Trees, Buildings, Cars)
+    // We need to sort ALL objects by Z (distance from camera).
+    // In our -Y forward system, smaller Y is further away.
+    // So sort descending Y? No.
+    // Objects with Y < CameraY are in front.
+    // The further (smaller) Y, the further away.
+    // Painters algo: Draw furthest first (Smallest Y first).
 
-    ctx.save();
-    ctx.translate(-state.camera.x, -state.camera.y);
+    let renderList = [];
 
-    // Cull and Draw World
-    const viewL = state.camera.x - 500;
-    const viewR = state.camera.x + canvas.width + 500;
-    const viewT = state.camera.y - 500;
-    const viewB = state.camera.y + canvas.height + 500;
+    state.world.backgroundObjects.forEach(obj => renderList.push({ type: 'scenery', ref: obj, y: obj.y }));
+    state.cars.forEach(car => renderList.push({ type: 'car', ref: car, y: car.y }));
 
-    // Draw Roads (Bottom Layer)
-    drawRoads(ctx, viewL, viewR, viewT, viewB);
+    // Filter visible (simple)
+    renderList = renderList.filter(item => item.y < state.camera.y + 200 && item.y > state.camera.y - 6000);
 
-    // Draw Water
-    state.world.waters.forEach(w => drawWater(ctx, w));
+    // Sort: Smallest Y (Furthest) -> Largest Y (Closest)
+    renderList.sort((a, b) => a.y - b.y);
 
-    // Draw Trees
-    const visibleTrees = state.world.trees.filter(tree =>
-        tree.x > viewL && tree.x < viewR && tree.y > viewT && tree.y < viewB
-    );
-    visibleTrees.sort((a, b) => a.y - b.y);
-
-    visibleTrees.forEach(tree => {
-        drawCoconutTree(ctx, tree.x, tree.y, tree.scale);
+    renderList.forEach(item => {
+        if (item.type === 'scenery') {
+            if (item.ref.type === 'tree') drawCoconutTree(ctx, item.ref, state.camera);
+            else drawBuilding(ctx, item.ref, state.camera);
+        } else {
+            item.ref.draw(ctx, state.camera);
+        }
     });
 
-    // Draw Buildings
-    BUILDINGS.forEach(b => drawBuilding(ctx, b));
-
-    // Draw Cars (Sort copy by Y for depth)
-    const renderList = [...state.cars].sort((a, b) => a.y - b.y);
-    renderList.forEach(car => {
-        car.update();
-        car.draw(ctx);
-    });
-
-    // Night Overlay REMOVED
-    // Time UI REMOVED
-
-    // HUD Update
-    const speedKm = Math.floor(Math.abs(player.speed) * 15);
+    // Speedometer
+    const speedKm = Math.floor(Math.abs(player.speed) * 3); // Scale for display
     document.getElementById('speed').innerText = speedKm;
 
     requestAnimationFrame(gameLoop);
